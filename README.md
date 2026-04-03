@@ -1,6 +1,7 @@
 # MOTION: Phase-Resonance Control
 
 **MOTION** is a nonlinear control primitive designed for bounded actuation, extreme energy efficiency, and deterministic execution on resource-constrained embedded systems.
+https://zenodo.org/records/19394737
 
 ## Key Features
 * **Geometric Bounding:** Uses the intrinsic geometry of the $S^1$ manifold to bound control effort ($u = -K \sin(\Delta\varphi)$), avoiding artificial saturation artifacts.
