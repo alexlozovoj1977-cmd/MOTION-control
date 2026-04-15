@@ -3,34 +3,54 @@
 
 MotionController::MotionController() {
     initSinLUT();
-    K_gain = 1280;  // Дефолтний Gain (приблизно 5.0 у Q8)
-    B_damping = 25; // Дефолтне демпфування
+    K_gain = 1280;   // ~5.0 (у форматі Q8)
+    B_damping = 25;  // Коефіцієнт демпфування
 }
 
 void MotionController::initSinLUT() {
+    // Ініціалізація синусоїди. 
+    // 16384.0 - це амплітуда для майбутнього зсуву на 14 біт (>> 14)
     for (int i = 0; i < 1024; i++) {
-        // Заповнюємо таблицю синуса в діапазоні int16
-        // 16384 - це амплітуда (Q14), щоб уникнути переповнення при множенні
-        sinLUT[i] = (int16_t)(16384.0 * sin(i * 2.0 * M_PI / 1024.0));
+        sinLUT[i] = (int16_t)(16384.0 * sin(2.0 * M_PI * i / 1024.0));
     }
 }
 
-void MotionController::update(const uint16_t* target_phi, const uint16_t* current_phi, int16_t* output_torque) {
+// --- helper: circular shortest difference ---
+// Використовуємо властивості доповнювального коду для блискавичного переходу через нуль
+inline int16_t circularDiff(uint16_t a, uint16_t b) {
+    int16_t diff = (int16_t)(a - b);
+    return diff;
+}
+
+void MotionController::update(
+    const uint16_t* target_phi,
+    const uint16_t* current_phi,
+    int16_t* output_torque
+) {
     for (int i = 0; i < N_DOF; i++) {
-        // 1. Обчислюємо фазову помилку
-        // uint16_t автоматично виконує операцію за модулем 2^16 (S1 manifold)
-        uint16_t d_phi = target_phi[i] - current_phi[i];
 
-        // 2. Отримуємо значення синуса з LUT (зсув на 6 біт для переходу 16->10 біт)
-        int32_t sin_val = sinLUT[d_phi >> 6];
+        // 1. Shortest circular phase error (Геодезика на колі)
+        int16_t d_phi = circularDiff(target_phi[i], current_phi[i]);
 
-        // 3. Розрахунок зусилля (Energy Shaping)
-        // u = -K * sin(d_phi)
-        int32_t u_effort = (sin_val * K_gain) >> 14; 
+        // 2. Map to LUT index (10-bit)
+        // Приведення до uint16_t і зсув на 6 біт перетворює діапазон 65536 у 1024
+        uint16_t idx = ((uint16_t)d_phi) >> 6;  
+        idx &= 0x03FF; // Safety mask (захист від виходу за межі пам'яті)
 
-        // 4. Додавання демпфування (опціонально, якщо є оцінка швидкості)
-        // Тут може бути різниця між поточним і попереднім кроком
-        
+        int32_t sin_val = sinLUT[idx];
+
+        // 3. Energy shaping (Обчислення градієнта потенціалу)
+        int32_t u_effort = (sin_val * K_gain) >> 14;
+
+        // 4. Optional damping (finite difference)
+        // Закоментовано, але готово до використання у робототехніці
+        // int16_t vel = current_phi[i] - prev_phi[i];
+        // u_effort -= (vel * B_damping) >> 8;
+
+        // 5. Saturation (Критичний захист апаратної частини від перевантаження)
+        if (u_effort > 32767) u_effort = 32767;
+        if (u_effort < -32768) u_effort = -32768;
+
         output_torque[i] = (int16_t)u_effort;
     }
 }
